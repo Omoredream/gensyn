@@ -14,9 +14,9 @@ class RGRewards:
         if answer is None or not answer:
             return [0.0] * len(completions)
 
-        correctness = accuracy_reward(completions, answer, metadata, weight=1.0)
+        correctness = accuracy_reward(completions, answer, metadata, weight=10000.0)
         if include_formatting:
-            formatting = format_reward(completions, weight=0.1)
+            formatting = format_reward(completions, weight=1000.0)
             cumulative = [sum(tup) for tup in zip(formatting, correctness)]
             return cumulative
         else:
