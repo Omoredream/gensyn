@@ -219,7 +219,7 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
                 )
 
     def agent_block(
-        self, check_interval=5.0, log_timeout=10.0, max_check_interval=60.0 * 15
+        self, check_interval=2.0, log_timeout=10.0, max_check_interval=6.0 * 15
     ):
         start_time = time.monotonic()
         fetch_log_time = start_time
