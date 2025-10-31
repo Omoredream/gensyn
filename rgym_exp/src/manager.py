@@ -87,8 +87,12 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
 
         self.batched_signals = 0.0
         self.time_since_submit = time.time()  # seconds
-        self.submit_period = 0.5  # hours
+        self.submit_period = 0.25  # hours
         self.submitted_this_round = False
+
+        # Submission retry configuration
+        self.submit_retry_attempts = int(kwargs.get("submit_retry_attempts", 3))
+        self.submit_retry_delay = float(kwargs.get("submit_retry_delay", 5.0))
 
         # PRG Game
         self.prg_module = PRGModule(log_dir, **kwargs)
@@ -120,25 +124,36 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
     def _try_submit_to_chain(self, signal_by_agent):
         elapsed_time_hours = (time.time() - self.time_since_submit) / 3600
         if elapsed_time_hours > self.submit_period:
-            try:
-                self.coordinator.submit_reward(
-                    self.state.round, 0, int(self.batched_signals), self.peer_id
-                )
-                self.batched_signals = 0.0
-                if len(signal_by_agent) > 0:
-                    max_agent, max_signal = max(
-                        signal_by_agent.items(), key=lambda x: x[1]
-                    )
-                else:  # if we have no signal_by_agents, just submit ourselves.
-                    max_agent = self.peer_id
+            reward_submitted = False
+            for attempt in range(self.submit_retry_attempts):
+                try:
+                    # Submit reward (only once per retry session)
+                    if not reward_submitted:
+                        self.coordinator.submit_reward(
+                            self.state.round, 0, int(self.batched_signals), self.peer_id
+                        )
+                        self.batched_signals = 0.0
+                        reward_submitted = True
 
-                self.coordinator.submit_winners(
-                    self.state.round, [max_agent], self.peer_id
-                )
-                self.time_since_submit = time.time()
-                self.submitted_this_round = True
-            except Exception as e:
-                get_logger().debug(str(e))
+                    # Determine winner and submit
+                    if len(signal_by_agent) > 0:
+                        max_agent, max_signal = max(
+                            signal_by_agent.items(), key=lambda x: x[1]
+                        )
+                    else:  # if we have no signal_by_agents, just submit ourselves.
+                        max_agent = self.peer_id
+
+                    self.coordinator.submit_winners(
+                        self.state.round, [max_agent], self.peer_id
+                    )
+                    self.time_since_submit = time.time()
+                    self.submitted_this_round = True
+                    break
+                except Exception as e:
+                    get_logger().debug(str(e))
+                    # Only sleep if we have remaining attempts
+                    if attempt < self.submit_retry_attempts - 1:
+                        time.sleep(self.submit_retry_delay)
 
     def _hook_after_rewards_updated(self):
         try:
@@ -219,7 +234,7 @@ class SwarmGameManager(BaseGameManager, DefaultGameManagerMixin):
                 )
 
     def agent_block(
-        self, check_interval=2.0, log_timeout=10.0, max_check_interval=6.0 * 15
+        self, check_interval=2.0, log_timeout=10.0, max_check_interval=30.0 * 15
     ):
         start_time = time.monotonic()
         fetch_log_time = start_time
