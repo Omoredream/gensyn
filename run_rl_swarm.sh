@@ -153,7 +153,53 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
         echo "Building server"
         yarn build > "$ROOT/logs/yarn.log" 2>&1
     fi
-    yarn start >> "$ROOT/logs/yarn.log" 2>&1 & # Run in background and log output
+    # Pick a free port starting from 3000 if PORT not set or occupied
+    pick_free_port() {
+        local start_port="${1:-3000}"
+        local p=$start_port
+        while true; do
+            if command -v lsof >/dev/null 2>&1; then
+                if ! lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | grep -q ":${p} "; then
+                    echo "$p"; return 0
+                fi
+            elif command -v ss >/dev/null 2>&1; then
+                if ! ss -ltn 2>/dev/null | awk '{print $4}' | grep -q ":${p}$"; then
+                    echo "$p"; return 0
+                fi
+            elif command -v netstat >/dev/null 2>&1; then
+                if ! netstat -tuln 2>/dev/null | awk '{print $4}' | grep -q ":${p}$"; then
+                    echo "$p"; return 0
+                fi
+            else
+                # Fallback: assume port is free if no tooling available
+                echo "$p"; return 0
+            fi
+            p=$((p+1))
+        done
+    }
+
+    PORT=${PORT:-}
+    if [ -z "$PORT" ]; then
+        PORT=$(pick_free_port 3000)
+    else
+        # If user provided PORT but it's busy, pick another
+        if command -v lsof >/dev/null 2>&1; then
+            if lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | grep -q ":${PORT} "; then
+                PORT=$(pick_free_port 3000)
+            fi
+        elif command -v ss >/dev/null 2>&1; then
+            if ss -ltn 2>/dev/null | awk '{print $4}' | grep -q ":${PORT}$"; then
+                PORT=$(pick_free_port 3000)
+            fi
+        elif command -v netstat >/dev/null 2>&1; then
+            if netstat -tuln 2>/dev/null | awk '{print $4}' | grep -q ":${PORT}$"; then
+                PORT=$(pick_free_port 3000)
+            fi
+        fi
+    fi
+    export PORT
+
+    PORT=$PORT yarn start >> "$ROOT/logs/yarn.log" 2>&1 & # Run in background and log output on chosen PORT
 
     SERVER_PID=$!  # Store the process ID
     echo "Started server process: $SERVER_PID"
@@ -161,13 +207,13 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
 
     # Try to open the URL in the default browser
     if [ -z "$DOCKER" ]; then
-        if open http://localhost:3000 2> /dev/null; then
-            echo_green ">> Successfully opened http://localhost:3000 in your default browser."
+        if open http://localhost:$PORT 2> /dev/null; then
+            echo_green ">> Successfully opened http://localhost:$PORT in your default browser."
         else
-            echo ">> Failed to open http://localhost:3000. Please open it manually."
+            echo ">> Failed to open http://localhost:$PORT. Please open it manually."
         fi
     else
-        echo_green ">> Please open http://localhost:3000 in your host browser."
+        echo_green ">> Please open http://localhost:$PORT in your host browser."
     fi
 
     cd ..
@@ -184,7 +230,7 @@ if [ "$CONNECT_TO_TESTNET" = true ]; then
     # Wait until the API key is activated by the client
     echo "Waiting for API key to become activated..."
     while true; do
-        STATUS=$(curl -s "http://localhost:3000/api/get-api-key-status?orgId=$ORG_ID")
+        STATUS=$(curl -s "http://localhost:$PORT/api/get-api-key-status?orgId=$ORG_ID")
         if [[ "$STATUS" == "activated" ]]; then
             echo "API key is activated! Proceeding..."
             break
